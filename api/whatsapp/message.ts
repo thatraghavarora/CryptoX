@@ -179,7 +179,7 @@ const handler: VercelApiHandler = async (
             )
             await sendMessageToPhoneNumber(
               recipientPhone,
-              `CryptoX is a WhatsApp-native crypto wallet powered by *Hela Chain* ⛓️\n\n✅ Instant payments\n✅ Send & receive HLUSD\n✅ Non-custodial wallet\n✅ No app needed — just WhatsApp!`,
+              `CryptoX is a WhatsApp-native crypto wallet powered by *Hela Chain* ⛓️\n\n✅ Instant payments \n✅ Send & receive HLUSD\n✅ Non-custodial wallet\n✅ No app needed — just WhatsApp! #PrayogamProject`,
             )
             await sendMessageToPhoneNumber(
               recipientPhone,
