@@ -175,7 +175,7 @@ const handler: VercelApiHandler = async (
             console.log('New user! Sending welcome message...')
             await sendMessageToPhoneNumber(
               recipientPhone,
-              `Hi ${recipientName}! 👋 Welcome to *CryptoX*\n_Built by  Raghav Arora #Prayogam Project`,
+              `Hi ${recipientName}! 👋 Welcome to *CryptoX*\n_Built by  Raghav Arora\n #Prayogam Project`,
             )
             await sendMessageToPhoneNumber(
               recipientPhone,
