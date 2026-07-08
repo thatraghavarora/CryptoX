@@ -1,0 +1,35 @@
+diff --git a/node_modules/unirest/index.js b/node_modules/unirest/index.js
+index 7409699..d57b6d7 100644
+--- a/node_modules/unirest/index.js
++++ b/node_modules/unirest/index.js
+@@ -17,7 +17,7 @@ var Stream = require('stream')
+ var mime = require('mime')
+ var zlib = require('zlib')
+ var path = require('path')
+-var URL = require('url')
++// URL is available globally in Node.js (WHATWG URL API - no import needed)
+ var fs = require('fs')
+ 
+ /**
+@@ -625,7 +625,7 @@ var Unirest = function (method, uri, headers, body, callback) {
+ 
+         if ($this._multipart.length && !$this._stream) {
+           header = $this.options.headers[$this.hasHeader('content-type')]
+-          parts = URL.parse($this.options.url)
++          parts = new URL($this.options.url)
+           form = new FormData()
+ 
+           if (header) {
+@@ -647,10 +647,10 @@ var Unirest = function (method, uri, headers, body, callback) {
+             // Formdata doesn't expect port to be included with host
+             // so we use hostname rather than host
+             host: parts.hostname,
+-            path: parts.path,
++            path: parts.pathname + (parts.search || ''),
+             method: $this.options.method,
+             headers: $this.options.headers,
+-            auth: authn($this.options.auth || parts.auth)
++            auth: authn($this.options.auth || (parts.username ? parts.username + ':' + parts.password : null))
+           }, function (error, response) {
+             var decoder = new StringDecoder('utf8')
+ 
