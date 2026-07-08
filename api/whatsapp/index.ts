@@ -107,9 +107,6 @@ const handler: VercelApiHandler = async (
 
   // ── POST: Incoming WhatsApp message ──────────────────────────────────────────
   if (req.method === 'POST') {
-    // ✅ Always respond 200 to Meta immediately — prevents retries
-    res.status(200).send('ok')
-
     console.log('POST /api/whatsapp — raw body:', JSON.stringify(req.body, null, 2))
 
     let recipientPhone = 'unknown'
@@ -395,6 +392,9 @@ const handler: VercelApiHandler = async (
       logSystem(`Top-level error in webhook`, recipientPhone, errMsg)
     }
 
+    // ✅ Respond to Meta at the VERY END of execution.
+    // In Vercel serverless, sending the response too early freezes the lambda.
+    res.status(200).send('ok')
     return
   }
 
