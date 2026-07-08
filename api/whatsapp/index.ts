@@ -72,6 +72,7 @@ const handler: VercelApiHandler = async (
   req: WhatsappNewMessageEventNotificationRequest,
   res: VercelResponse,
 ) => {
+  console.log(`[INCOMING REQUEST] ${req.method} ${req.url}`)
   // ── GET: Expose logs for debug page ───────────────────────────────────────
   if (req.method === 'GET' && req.query.action === 'logs') {
     res.status(200).json({ ok: true, logs: messageLog })
