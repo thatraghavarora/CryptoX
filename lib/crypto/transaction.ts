@@ -1,23 +1,10 @@
 import { ethers } from 'ethers'
-
-import {
-  User,
-  getAddressByPhoneNumber,
-  getUserFromPhoneNumber,
-} from 'lib/user'
+import { User, getAddressByPhoneNumber, getUserFromPhoneNumber } from 'lib/user'
 import { getContract, getProvider } from '.'
 
-const rpcUrl = process.env.HELA_RPC_URL
-if (!rpcUrl) {
-  throw new Error('HELA_RPC_URL is not defined')
-}
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-type Status =
-  | 'ADDRESS_PENDING'
-  | 'AMOUNT_PENDING'
-  | 'CONFIRMED'
-  | 'CANCELLED'
-  | 'ERROR'
+type Status = 'ADDRESS_PENDING' | 'AMOUNT_PENDING' | 'CONFIRMED' | 'CANCELLED' | 'ERROR'
 
 type PaymentRequest = {
   id: string
@@ -32,8 +19,11 @@ type PaymentRequest = {
 export type Address = string
 export type PhoneNumber = string
 
-// ─── In-memory payment flow state (replaces Supabase for flow tracking) ──────
+// ─── In-memory payment flow state ────────────────────────────────────────────
+// Note: resets on Lambda cold start — fine for short-lived transactions
 const paymentRequestStore = new Map<string, PaymentRequest>()
+
+// ─── Payment Request Helpers ──────────────────────────────────────────────────
 
 export async function makePaymentRequest({
   fromUserId,
@@ -57,19 +47,17 @@ export async function makePaymentRequest({
   return paymentRequest
 }
 
-export async function getUserPaymentRequests(
-  userId: string,
-): Promise<PaymentRequest[]> {
+export async function getUserPaymentRequests(userId: string): Promise<PaymentRequest[]> {
   const req = paymentRequestStore.get(userId)
   return req ? [req] : []
 }
 
-export async function isReceiverInputPending(userId: string) {
+export async function isReceiverInputPending(userId: string): Promise<boolean> {
   const req = paymentRequestStore.get(userId)
   return req?.status === 'ADDRESS_PENDING'
 }
 
-export async function isUserAwaitingAmountInput(userId: string) {
+export async function isUserAwaitingAmountInput(userId: string): Promise<boolean> {
   const req = paymentRequestStore.get(userId)
   return req?.status === 'AMOUNT_PENDING'
 }
@@ -79,7 +67,7 @@ export async function getRecipientAddressFromUncompletedPaymentRequest(
 ): Promise<string> {
   const req = paymentRequestStore.get(userId)
   if (!req || req.status !== 'AMOUNT_PENDING') {
-    throw new Error('No pending payment requests found')
+    throw new Error('No pending payment request found')
   }
   return req.to
 }
@@ -89,7 +77,7 @@ export async function getReceiverUserFromUncompletedPaymentRequest(
 ): Promise<User | null> {
   const req = paymentRequestStore.get(userId)
   if (!req || req.status !== 'AMOUNT_PENDING') {
-    throw new Error('No pending payment requests found')
+    throw new Error('No pending payment request found')
   }
   if (!req.toUserId) return null
   return getUserFromPhoneNumber(req.toUserId)
@@ -101,21 +89,17 @@ export async function addReceiverToPayment({
 }: {
   userId: string
   receiver: string
-}) {
+}): Promise<string> {
   const isAddress = ethers.isAddress(receiver)
   const receiverUser = await getUserFromPhoneNumber(receiver)
 
   if (!isAddress && !receiverUser) {
     throw new Error(
-      `Invalid recipient, must be a valid address or phone number of a registered user ${JSON.stringify(
-        receiver,
-      )}`,
+      `Invalid recipient. Enter a valid wallet address or a registered phone number.`,
     )
   }
 
-  const receiverAddress = isAddress
-    ? receiver
-    : await getAddressByPhoneNumber(receiver)
+  const receiverAddress = isAddress ? receiver : await getAddressByPhoneNumber(receiver)
 
   const req = paymentRequestStore.get(userId)
   if (req) {
@@ -134,7 +118,7 @@ export async function confirmPaymentRequest({
 }: {
   userId: string
   amount: number
-}) {
+}): Promise<void> {
   const req = paymentRequestStore.get(userId)
   if (req) {
     req.amount = amount
@@ -143,26 +127,23 @@ export async function confirmPaymentRequest({
   }
 }
 
-export async function cancelPaymentRequest(userId: string) {
+export async function cancelPaymentRequest(userId: string): Promise<void> {
   const req = paymentRequestStore.get(userId)
-  if (
-    req &&
-    req.status !== 'CONFIRMED' &&
-    req.status !== 'CANCELLED' &&
-    req.status !== 'ERROR'
-  ) {
+  if (req && req.status !== 'CONFIRMED' && req.status !== 'CANCELLED' && req.status !== 'ERROR') {
     req.status = 'CANCELLED'
     paymentRequestStore.set(userId, req)
   }
 }
 
-export async function updatePaymentRequestToError(userId: string) {
+export async function updatePaymentRequestToError(userId: string): Promise<void> {
   const req = paymentRequestStore.get(userId)
   if (req && req.status === 'AMOUNT_PENDING') {
     req.status = 'ERROR'
     paymentRequestStore.set(userId, req)
   }
 }
+
+// ─── On-chain Transfer ────────────────────────────────────────────────────────
 
 export async function sendHlusdFromWallet({
   tokenAmount,
@@ -174,36 +155,31 @@ export async function sendHlusdFromWallet({
   toAddress: string
   privateKey: string
   fromAddress: string
-}) {
+}): Promise<ethers.TransactionResponse> {
   try {
     const provider = getProvider()
     const wallet = new ethers.Wallet(privateKey, provider)
     const amountInWei = ethers.parseEther(String(tokenAmount))
 
-    // 1. Send actual HLUSD on-chain
-    const tx = await wallet.sendTransaction({
-      to: toAddress,
-      value: amountInWei,
-    })
+    // 1. Send HLUSD on-chain
+    const tx = await wallet.sendTransaction({ to: toAddress, value: amountInWei })
     await tx.wait()
 
-    // 2. Record payment permanently on smart contract
+    // 2. Record payment on smart contract
     const contract = getContract(wallet)
     const contractTx = await contract.createPaymentRequest(toAddress, amountInWei)
     await contractTx.wait()
 
     return tx
   } catch (error) {
-    const isInsufficientFunds = (error as Error).message.includes(
-      'insufficient funds',
-    )
-    if (isInsufficientFunds) {
+    const msg = (error as Error).message || ''
+    if (msg.includes('insufficient funds')) {
       throw new Error('Insufficient HLUSD balance to complete this transaction')
     }
     throw error
   }
 }
 
-export function getHelaScanUrlForAddress(address: string) {
+export function getHelaScanUrlForAddress(address: string): string {
   return `https://testnet.helascan.io/address/${address}`
 }

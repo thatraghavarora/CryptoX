@@ -1,45 +1,27 @@
 import crypto from 'crypto'
 import { ethers } from 'ethers'
 
-const encryptionKey = process.env.ENCRYPTION_KEY
-if (!encryptionKey) {
-  throw new Error('ENCRYPTION_KEY is not defined')
+// ─── Lazy env-var getters (safe for serverless — no module-level throws) ──────
+
+function getEncryptionKey(): string {
+  const key = process.env.ENCRYPTION_KEY
+  if (!key) throw new Error('ENCRYPTION_KEY env var is not set')
+  return key
 }
 
-// ─── Encryption ──────────────────────────────────────────────────────────────
-
-export function encryptPrivateKey(privateKey: string): string {
-  const iv = crypto.randomBytes(16)
-  const key = Buffer.from(encryptionKey!, 'hex')
-  const cipher = crypto.createCipheriv('aes-256-cbc', key, iv)
-  const encrypted = Buffer.concat([cipher.update(privateKey, 'utf8'), cipher.final()])
-  return iv.toString('hex') + ':' + encrypted.toString('hex')
+function getRpcUrl(): string {
+  const url = process.env.HELA_RPC_URL
+  if (!url) throw new Error('HELA_RPC_URL env var is not set')
+  return url
 }
 
-export function decryptPrivateKey(encryptedPrivateKey: string): string {
-  const [ivHex, encryptedHex] = encryptedPrivateKey.split(':')
-  const iv = Buffer.from(ivHex, 'hex')
-  const key = Buffer.from(encryptionKey!, 'hex')
-  const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv)
-  const decrypted = Buffer.concat([
-    decipher.update(Buffer.from(encryptedHex, 'hex')),
-    decipher.final(),
-  ])
-  return decrypted.toString('utf8')
+function getContractAddress(): string {
+  const addr = process.env.CRYPTOX_CONTRACT_ADDRESS
+  if (!addr) throw new Error('CRYPTOX_CONTRACT_ADDRESS env var is not set')
+  return addr
 }
 
-
-const rpcUrl = process.env.HELA_RPC_URL
-if (!rpcUrl) {
-  throw new Error('HELA_RPC_URL is not defined')
-}
-
-const contractAddress = process.env.CRYPTOX_CONTRACT_ADDRESS
-if (!contractAddress) {
-  throw new Error('CRYPTOX_CONTRACT_ADDRESS is not defined')
-}
-
-// ABI for the CryptoX smart contract (with encryptedPrivateKey)
+// ─── ABI ─────────────────────────────────────────────────────────────────────
 const CRYPTOX_ABI = [
   'function registerUser(string memory _phone, string memory _name, address _wallet, string memory _encryptedPrivateKey) public',
   'function getUser(string memory _phone) public view returns (address, string memory, string memory, bool)',
@@ -51,31 +33,69 @@ const CRYPTOX_ABI = [
 
 type Numberish = number | bigint
 
-/**
- * helper function to remove 18 decimals from a number
- */
 function removeDecimals(number: Numberish): number {
   return Number(number) / 10 ** 18
 }
 
-export function getProvider() {
-  return new ethers.JsonRpcProvider(rpcUrl)
+// ─── Encryption ───────────────────────────────────────────────────────────────
+
+export function encryptPrivateKey(privateKey: string): string {
+  const encryptionKey = getEncryptionKey()
+  const iv = crypto.randomBytes(16)
+  const key = Buffer.from(encryptionKey, 'hex')
+  const cipher = crypto.createCipheriv('aes-256-cbc', key, iv)
+  const encrypted = Buffer.concat([cipher.update(privateKey, 'utf8'), cipher.final()])
+  return iv.toString('hex') + ':' + encrypted.toString('hex')
 }
 
-export function getContract(signerOrProvider: ethers.Signer | ethers.Provider) {
-  return new ethers.Contract(contractAddress!, CRYPTOX_ABI, signerOrProvider)
+export function decryptPrivateKey(encryptedPrivateKey: string): string {
+  const encryptionKey = getEncryptionKey()
+  const [ivHex, encryptedHex] = encryptedPrivateKey.split(':')
+  const iv = Buffer.from(ivHex, 'hex')
+  const key = Buffer.from(encryptionKey, 'hex')
+  const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv)
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(encryptedHex, 'hex')),
+    decipher.final(),
+  ])
+  return decrypted.toString('utf8')
 }
 
-export async function getAccountBalances(privateKey: string): Promise<{
-  hlusdBalance: number
-}> {
+// ─── Provider / Contract ──────────────────────────────────────────────────────
+
+export function getProvider(): ethers.JsonRpcProvider {
+  return new ethers.JsonRpcProvider(getRpcUrl())
+}
+
+export function getContract(
+  signerOrProvider: ethers.Signer | ethers.Provider,
+): ethers.Contract {
+  return new ethers.Contract(getContractAddress(), CRYPTOX_ABI, signerOrProvider)
+}
+
+// ─── Crypto Utilities ─────────────────────────────────────────────────────────
+
+export function buildPrivateKey(): string {
+  const id = crypto.randomBytes(32).toString('hex')
+  return `0x${id}`
+}
+
+export function getAddressFromPrivateKey(privateKey: string): string {
+  return new ethers.Wallet(privateKey).address
+}
+
+// ─── Account Balances ─────────────────────────────────────────────────────────
+
+export async function getAccountBalances(
+  privateKey: string,
+): Promise<{ hlusdBalance: number }> {
   const provider = getProvider()
   const wallet = new ethers.Wallet(privateKey)
   const hlusdBalance = await provider.getBalance(wallet.address, 'latest')
-  return {
-    hlusdBalance: removeDecimals(hlusdBalance),
-  }
+  return { hlusdBalance: removeDecimals(hlusdBalance) }
 }
+
+// ─── Chain Registration ───────────────────────────────────────────────────────
 
 export async function registerUserOnChain(
   phone: string,
@@ -83,20 +103,18 @@ export async function registerUserOnChain(
   privateKey: string,
   walletAddress: string,
 ): Promise<void> {
-  const provider = getProvider()
-
-  // Operator wallet pays gas for new user registration
   const operatorKey = process.env.OPERATOR_PRIVATE_KEY
-  if (!operatorKey) {
-    throw new Error('OPERATOR_PRIVATE_KEY is not defined')
-  }
+  if (!operatorKey) throw new Error('OPERATOR_PRIVATE_KEY env var is not set')
+
+  const provider = getProvider()
   const operatorWallet = new ethers.Wallet(operatorKey, provider)
   const contract = getContract(operatorWallet)
-
   const encryptedKey = encryptPrivateKey(privateKey)
   const tx = await contract.registerUser(phone, name, walletAddress, encryptedKey)
   await tx.wait()
 }
+
+// ─── Chain Query ──────────────────────────────────────────────────────────────
 
 export async function getUserFromChain(phone: string): Promise<{
   walletAddress: string
@@ -143,15 +161,4 @@ export async function getPaymentRequestsFromChain(userAddress: string): Promise<
     status: r.status,
     createdAt: Number(r.createdAt),
   }))
-}
-
-export function buildPrivateKey(): string {
-  const id = crypto.randomBytes(32).toString('hex')
-  const privateKey = `0x${id}`
-  return privateKey
-}
-
-export function getAddressFromPrivateKey(privateKey: string): string {
-  const wallet = new ethers.Wallet(privateKey)
-  return wallet.address
 }
