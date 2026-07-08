@@ -149,12 +149,10 @@ export async function sendHlusdFromWallet({
   tokenAmount,
   toAddress,
   privateKey,
-  fromAddress,
 }: {
   tokenAmount: number
   toAddress: string
   privateKey: string
-  fromAddress: string
 }): Promise<ethers.TransactionResponse> {
   try {
     const provider = getProvider()

@@ -52,18 +52,26 @@ function getDerivedEncryptionKey(): Buffer {
 export function encryptPrivateKey(privateKey: string): string {
   const iv = crypto.randomBytes(16)
   const key = getDerivedEncryptionKey()
+  // @ts-ignore
   const cipher = crypto.createCipheriv('aes-256-cbc', key, iv)
+  // @ts-ignore
   const encrypted = Buffer.concat([cipher.update(privateKey, 'utf8'), cipher.final()])
   return iv.toString('hex') + ':' + encrypted.toString('hex')
 }
 
 export function decryptPrivateKey(encryptedPrivateKey: string): string {
   const [ivHex, encryptedHex] = encryptedPrivateKey.split(':')
+  if (!ivHex || !encryptedHex) throw new Error('Invalid encrypted private key format')
+
   const iv = Buffer.from(ivHex, 'hex')
   const key = getDerivedEncryptionKey()
+  // @ts-ignore
   const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv)
+  // @ts-ignore
   const decrypted = Buffer.concat([
+    // @ts-ignore
     decipher.update(Buffer.from(encryptedHex, 'hex')),
+    // @ts-ignore
     decipher.final(),
   ])
   return decrypted.toString('utf8')

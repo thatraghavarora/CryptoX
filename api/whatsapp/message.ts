@@ -7,8 +7,8 @@
 import type { VercelApiHandler, VercelResponse } from '@vercel/node'
 import { WhatsappNewMessageEventNotificationRequest } from './types'
 
-const handler: VercelApiHandler = (
-  req: WhatsappNewMessageEventNotificationRequest,
+const handler: VercelApiHandler = async (
+  _req: WhatsappNewMessageEventNotificationRequest,
   res: VercelResponse,
 ) => {
   console.log('⚠️  /api/whatsapp/message called — this endpoint is deprecated.')

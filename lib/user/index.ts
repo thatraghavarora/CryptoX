@@ -57,14 +57,14 @@ export async function getUserFromPhoneNumber(
   }
 }
 
-export async function getUserFromId(userId: string): Promise<User> {
-  // userId is the wallet address on-chain
+export async function getUserFromId(_userId: string): Promise<User> {
+  // _userId is the wallet address on-chain
   throw new Error(
     'getUserFromId is not supported in on-chain mode. Use getUserFromPhoneNumber instead.',
   )
 }
 
-export async function getAddressByUserId(userId: string): Promise<string> {
+export async function getAddressByUserId(_userId: string): Promise<string> {
   throw new Error(
     'getAddressByUserId is not supported in on-chain mode. Use getAddressByPhoneNumber instead.',
   )

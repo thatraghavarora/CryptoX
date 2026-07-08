@@ -13,8 +13,6 @@ import {
 } from '../../lib/user'
 import { getAccountBalances } from '../../lib/crypto'
 import {
-  Address,
-  PhoneNumber,
   addReceiverToPayment,
   cancelPaymentRequest,
   confirmPaymentRequest,
@@ -114,7 +112,6 @@ const handler: VercelApiHandler = async (
 
     let recipientPhone = 'unknown'
     let recipientName = 'Unknown'
-    let messageId = ''
 
     try {
       const data: WhatsappParsedMessage = Whatsapp.parseMessage(req.body)
@@ -126,7 +123,7 @@ const handler: VercelApiHandler = async (
       }
 
       const { message } = data
-      messageId = message.message_id
+      let messageId = message.message_id
       
       // ── Deduplicate: Meta retries if our blockchain calls take > 5s ──────
       if (seenMessageIds.has(messageId)) {
@@ -138,7 +135,6 @@ const handler: VercelApiHandler = async (
       // Keep set from growing infinitely
       if (seenMessageIds.size > 1000) seenMessageIds.clear()
 
-      const { message } = data
       recipientPhone = message.from.phone
       recipientName = message.from.name || 'Unknown'
       messageId = message.message_id
@@ -241,7 +237,6 @@ const handler: VercelApiHandler = async (
               await sendHlusdFromWallet({
                 tokenAmount: amount,
                 privateKey: senderPrivateKey,
-                fromAddress,
                 toAddress: await getRecipientAddressFromUncompletedPaymentRequest(userId),
               })
               await confirmPaymentRequest({ userId, amount })
