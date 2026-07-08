@@ -39,20 +39,28 @@ function removeDecimals(number: Numberish): number {
 
 // ─── Encryption ───────────────────────────────────────────────────────────────
 
-export function encryptPrivateKey(privateKey: string): string {
+function getDerivedEncryptionKey(): Buffer {
   const encryptionKey = getEncryptionKey()
+  let key = Buffer.from(encryptionKey, 'hex')
+  // If not exactly 32 bytes (64 hex chars), hash it to get a valid 32-byte AES key
+  if (key.length !== 32) {
+    key = crypto.createHash('sha256').update(encryptionKey).digest()
+  }
+  return key
+}
+
+export function encryptPrivateKey(privateKey: string): string {
   const iv = crypto.randomBytes(16)
-  const key = Buffer.from(encryptionKey, 'hex')
+  const key = getDerivedEncryptionKey()
   const cipher = crypto.createCipheriv('aes-256-cbc', key, iv)
   const encrypted = Buffer.concat([cipher.update(privateKey, 'utf8'), cipher.final()])
   return iv.toString('hex') + ':' + encrypted.toString('hex')
 }
 
 export function decryptPrivateKey(encryptedPrivateKey: string): string {
-  const encryptionKey = getEncryptionKey()
   const [ivHex, encryptedHex] = encryptedPrivateKey.split(':')
   const iv = Buffer.from(ivHex, 'hex')
-  const key = Buffer.from(encryptionKey, 'hex')
+  const key = getDerivedEncryptionKey()
   const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv)
   const decrypted = Buffer.concat([
     decipher.update(Buffer.from(encryptedHex, 'hex')),
@@ -103,8 +111,9 @@ export async function registerUserOnChain(
   privateKey: string,
   walletAddress: string,
 ): Promise<void> {
-  const operatorKey = process.env.OPERATOR_PRIVATE_KEY
+  let operatorKey = process.env.OPERATOR_PRIVATE_KEY
   if (!operatorKey) throw new Error('OPERATOR_PRIVATE_KEY env var is not set')
+  if (!operatorKey.startsWith('0x')) operatorKey = '0x' + operatorKey
 
   const provider = getProvider()
   const operatorWallet = new ethers.Wallet(operatorKey, provider)
