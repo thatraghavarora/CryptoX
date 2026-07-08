@@ -28,7 +28,7 @@ import {
   updatePaymentRequestToError,
 } from '../../lib/crypto/transaction'
 import { transformStringToNumber } from '../../lib/utils/number'
-import { logIncoming, logOutgoing, logSystem } from '../../lib/message-log'
+import { messageLog, logIncoming, logOutgoing, logSystem } from '../../lib/message-log'
 
 // ─── Helper: send a message and log delivery status ───────────────────────────
 async function send(phone: string, name: string, text: string): Promise<void> {
