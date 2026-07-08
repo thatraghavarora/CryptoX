@@ -72,6 +72,18 @@ const handler: VercelApiHandler = async (
   req: WhatsappNewMessageEventNotificationRequest,
   res: VercelResponse,
 ) => {
+  // ── GET: Expose logs for debug page ───────────────────────────────────────
+  if (req.method === 'GET' && req.query.action === 'logs') {
+    res.status(200).json({ ok: true, logs: messageLog })
+    return
+  }
+
+  if (req.method === 'GET' && req.query.action === 'clear') {
+    messageLog.splice(0, messageLog.length)
+    res.status(200).json({ ok: true, message: 'Logs cleared' })
+    return
+  }
+
   // ── GET: Webhook verification ──────────────────────────────────────────────
   if (req.method === 'GET') {
     const mode = req.query['hub.mode']
@@ -91,6 +103,7 @@ const handler: VercelApiHandler = async (
     res.status(401).json({ message: 'Unauthorized — verify token mismatch' })
     return
   }
+
 
   // ── POST: Incoming WhatsApp message ──────────────────────────────────────────
   if (req.method === 'POST') {
