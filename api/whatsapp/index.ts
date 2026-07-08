@@ -30,6 +30,8 @@ import {
 import { transformStringToNumber } from '../../lib/utils/number'
 import { messageLog, logIncoming, logOutgoing, logSystem } from '../../lib/message-log'
 
+const seenMessageIds = new Set<string>()
+
 // ─── Helper: send a message and log delivery status ───────────────────────────
 async function send(phone: string, name: string, text: string): Promise<void> {
   const log = logOutgoing({ phone, name, text, type: 'text_message' })
@@ -119,8 +121,22 @@ const handler: VercelApiHandler = async (
 
       if (!data?.isMessage) {
         logSystem('Non-message webhook event received (status update / read receipt etc.)')
+        res.status(200).send('ok')
         return
       }
+
+      const { message } = data
+      messageId = message.message_id
+      
+      // ── Deduplicate: Meta retries if our blockchain calls take > 5s ──────
+      if (seenMessageIds.has(messageId)) {
+        console.log(`Duplicate message ${messageId} ignored to prevent spam.`)
+        res.status(200).send('ok')
+        return
+      }
+      seenMessageIds.add(messageId)
+      // Keep set from growing infinitely
+      if (seenMessageIds.size > 1000) seenMessageIds.clear()
 
       const { message } = data
       recipientPhone = message.from.phone
