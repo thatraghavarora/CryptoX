@@ -100,8 +100,14 @@ const handler: VercelApiHandler = async (
       return
     }
 
-    logSystem(`Webhook verification FAILED — token mismatch`, 'SYSTEM', `got: ${token}`)
-    res.status(401).json({ message: 'Unauthorized — verify token mismatch' })
+    const expectedToken = process.env.META_WA_VERIFY_TOKEN || 'NOT_SET'
+    const errorMsg = `Webhook verification FAILED — token mismatch. Expected: "${expectedToken}", Got: "${token}"`
+    logSystem(errorMsg, 'SYSTEM')
+    res.status(401).json({
+      message: 'Unauthorized — verify token mismatch',
+      debug_received: token,
+      debug_expected_in_vercel: expectedToken
+    })
     return
   }
 
