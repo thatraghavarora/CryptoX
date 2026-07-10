@@ -270,7 +270,7 @@ const handler: VercelApiHandler = async (
           await send(
             recipientPhone,
             recipientName,
-            `Hi ${recipientName}! 👋 Welcome to *CryptoX*\nBuilt by Raghav Arora · #Prayogam Project`,
+            `Hi ${recipientName}! 👋 Welcome to *CryptoX*`,
           )
           await send(
             recipientPhone,
