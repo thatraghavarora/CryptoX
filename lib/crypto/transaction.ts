@@ -4,7 +4,7 @@ import { getContract, getProvider } from '.'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Status = 'ADDRESS_PENDING' | 'AMOUNT_PENDING' | 'CONFIRMED' | 'CANCELLED' | 'ERROR'
+type Status = 'ADDRESS_PENDING' | 'AMOUNT_PENDING' | 'PIN_PENDING' | 'CONFIRMED' | 'CANCELLED' | 'ERROR'
 
 type PaymentRequest = {
   id: string
@@ -22,6 +22,12 @@ export type PhoneNumber = string
 // ─── In-memory payment flow state ────────────────────────────────────────────
 // Note: resets on Lambda cold start — fine for short-lived transactions
 const paymentRequestStore = new Map<string, PaymentRequest>()
+
+export function getAmountFromPendingRequest(userId: string): number {
+  const req = paymentRequestStore.get(userId)
+  return req?.amount ?? 0
+}
+
 
 // ─── Payment Request Helpers ──────────────────────────────────────────────────
 
@@ -60,6 +66,11 @@ export async function isReceiverInputPending(userId: string): Promise<boolean> {
 export async function isUserAwaitingAmountInput(userId: string): Promise<boolean> {
   const req = paymentRequestStore.get(userId)
   return req?.status === 'AMOUNT_PENDING'
+}
+
+export async function isUserAwaitingPin(userId: string): Promise<boolean> {
+  const req = paymentRequestStore.get(userId)
+  return req?.status === 'PIN_PENDING'
 }
 
 export async function getRecipientAddressFromUncompletedPaymentRequest(
@@ -122,6 +133,14 @@ export async function confirmPaymentRequest({
   const req = paymentRequestStore.get(userId)
   if (req) {
     req.amount = amount
+    req.status = 'PIN_PENDING' // Wait for PIN before executing
+    paymentRequestStore.set(userId, req)
+  }
+}
+
+export async function confirmPinAndFinalize(userId: string): Promise<void> {
+  const req = paymentRequestStore.get(userId)
+  if (req) {
     req.status = 'CONFIRMED'
     paymentRequestStore.set(userId, req)
   }

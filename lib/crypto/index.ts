@@ -25,8 +25,12 @@ function getContractAddress(): string {
 const CRYPTOX_ABI = [
   'function registerUser(string calldata _phone, string calldata _name, address _wallet, string calldata _encryptedPrivateKey) external',
   'function getUser(string calldata _phone) external view returns (address walletAddress, string memory name, string memory encryptedPrivateKey, bool exists)',
+  'function setPin(string calldata _phone, bytes32 _pinHash) external',
+  'function verifyPin(string calldata _phone, bytes32 _pinHash) external view returns (bool)',
+  'function isPinSet(string calldata _phone) external view returns (bool)',
   'function recordPayment(address _to, uint256 _amount) external',
   'event UserRegistered(address indexed wallet, bytes32 indexed phoneHash, string name)',
+  'event PinSet(bytes32 indexed phoneHash)',
   'event PaymentSent(address indexed from, address indexed to, uint256 amount, uint256 timestamp)',
 ]
 
@@ -160,3 +164,33 @@ export async function recordPaymentOnChain(
 
 // Payments are now recorded as on-chain events (cheaper gas).
 // Use HeLa block explorer to query PaymentSent events for a given address.
+
+// ─── PIN Management ───────────────────────────────────────────────────────────
+
+function hashPin(pin: string): string {
+  // keccak256 of PIN — same as what Solidity uses internally
+  return ethers.keccak256(ethers.toUtf8Bytes(pin))
+}
+
+export async function setUserPin(phone: string, pin: string): Promise<void> {
+  const provider = getProvider()
+  const operatorKey = process.env.OPERATOR_PRIVATE_KEY!
+  const wallet = new ethers.Wallet(operatorKey, provider)
+  const contract = getContract(wallet)
+  const pinHash = hashPin(pin)
+  const tx = await contract.setPin(phone, pinHash)
+  await tx.wait()
+}
+
+export async function verifyUserPin(phone: string, pin: string): Promise<boolean> {
+  const provider = getProvider()
+  const contract = getContract(provider)
+  const pinHash = hashPin(pin)
+  return await contract.verifyPin(phone, pinHash)
+}
+
+export async function checkIsPinSet(phone: string): Promise<boolean> {
+  const provider = getProvider()
+  const contract = getContract(provider)
+  return await contract.isPinSet(phone)
+}
