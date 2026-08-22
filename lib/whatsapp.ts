@@ -56,3 +56,45 @@ export async function sendSimpleButtonsMessage(
     listOfButtons: buttons,
   })
 }
+
+/**
+ * Send an image to a WhatsApp number via a public URL.
+ * No file storage needed — Meta fetches the image from the URL directly.
+ */
+export async function sendImageToPhoneNumber(
+  recipientPhone: string,
+  imageUrl: string,
+  caption?: string,
+): Promise<void> {
+  const accessToken = process.env.META_WA_ACCESS_TOKEN
+  const phoneNumberId = process.env.META_WA_SENDER_PHONE_NUMBER_ID
+
+  const body = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: recipientPhone,
+    type: 'image',
+    image: {
+      link: imageUrl,
+      ...(caption ? { caption } : {}),
+    },
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    },
+  )
+
+  if (!response.ok) {
+    const err = await response.text()
+    throw new Error(`WhatsApp image send failed: ${err}`)
+  }
+}
+

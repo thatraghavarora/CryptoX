@@ -4,6 +4,7 @@ import {
   Whatsapp,
   sendMessageToPhoneNumber,
   sendSimpleButtonsMessage,
+  sendImageToPhoneNumber,
 } from '../../lib/whatsapp'
 import {
   getAddressByPhoneNumber,
@@ -337,10 +338,27 @@ const handler: VercelApiHandler = async (
             }
 
             case 'check_address': {
-              await send(recipientPhone, recipientName, 'Loading ⏳')
+              await send(recipientPhone, recipientName, 'Loading your deposit QR... ⏳')
               const address = await getAddressByPhoneNumber(recipientPhone)
-              await send(recipientPhone, recipientName, 'Your deposit address (Hela Chain):')
-              await send(recipientPhone, recipientName, address)
+
+              // Generate QR code via online API — no storage needed
+              const qrSize = 400
+              const qrData = encodeURIComponent(address)
+              const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${qrSize}x${qrSize}&data=${qrData}&format=png&margin=10`
+
+              // Send QR image with address as caption
+              try {
+                await sendImageToPhoneNumber(
+                  recipientPhone,
+                  qrUrl,
+                  `📥 *Your HeLa Chain Deposit Address*\n\n\`${address}\`\n\n_Scan this QR or copy the address above to receive HLUSD._`,
+                )
+              } catch {
+                // Fallback: send as plain text if image fails
+                await send(recipientPhone, recipientName, `📥 Your deposit address (HeLa Chain):`)
+                await send(recipientPhone, recipientName, address)
+              }
+
               await sendMenuTo(recipientPhone, recipientName)
               break
             }
