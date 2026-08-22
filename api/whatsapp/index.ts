@@ -101,7 +101,13 @@ const handler: VercelApiHandler = async (
       return
     }
 
-    res.status(401).json({ message: 'Unauthorized — mode not subscribe' })
+    // Plain GET (health check / browser visit) — return friendly status
+    res.status(200).json({
+      status: 'ok',
+      service: 'CryptoX WhatsApp Webhook',
+      message: 'Webhook is active. Awaiting Meta verification with hub.mode=subscribe.',
+      timestamp: new Date().toISOString(),
+    })
     return
   }
 
