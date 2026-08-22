@@ -77,7 +77,7 @@ export async function getRecipientAddressFromUncompletedPaymentRequest(
   userId: string,
 ): Promise<string> {
   const req = paymentRequestStore.get(userId)
-  if (!req || req.status !== 'AMOUNT_PENDING') {
+  if (!req || (req.status !== 'AMOUNT_PENDING' && req.status !== 'PIN_PENDING' && req.status !== 'CONFIRMED')) {
     throw new Error('No pending payment request found')
   }
   return req.to
@@ -87,7 +87,7 @@ export async function getReceiverUserFromUncompletedPaymentRequest(
   userId: string,
 ): Promise<User | null> {
   const req = paymentRequestStore.get(userId)
-  if (!req || req.status !== 'AMOUNT_PENDING') {
+  if (!req || (req.status !== 'AMOUNT_PENDING' && req.status !== 'PIN_PENDING' && req.status !== 'CONFIRMED')) {
     throw new Error('No pending payment request found')
   }
   if (!req.toUserId) return null
@@ -156,7 +156,7 @@ export async function cancelPaymentRequest(userId: string): Promise<void> {
 
 export async function updatePaymentRequestToError(userId: string): Promise<void> {
   const req = paymentRequestStore.get(userId)
-  if (req && req.status === 'AMOUNT_PENDING') {
+  if (req && req.status !== 'CONFIRMED' && req.status !== 'CANCELLED' && req.status !== 'ERROR') {
     req.status = 'ERROR'
     paymentRequestStore.set(userId, req)
   }

@@ -33,8 +33,11 @@ import { transformStringToNumber } from '../../lib/utils/number'
 import { messageLog, logIncoming, logOutgoing, logSystem } from '../../lib/message-log'
 
 const seenMessageIds = new Set<string>()
-// Tracks phones that have just created a wallet and need to set a PIN
-const pinSetupPending = new Set<string>()
+
+// ─── Wallet Creation State ────────────────────────────────────────────────────
+// Tracks users who clicked "Create Wallet" and need to provide a PIN first.
+// Maps phone → { name } so we can create wallet after PIN is collected.
+const walletCreationPending = new Map<string, { name: string }>()
 
 // ─── Helper: send a message and log delivery status ───────────────────────────
 async function send(phone: string, name: string, text: string): Promise<void> {
@@ -179,6 +182,67 @@ const handler: VercelApiHandler = async (
 
       // ── TEXT MESSAGE ──────────────────────────────────────────────────────
       if (typeOfMessage === 'text_message') {
+
+        // ════════════════════════════════════════════════════════════════════
+        // 1) WALLET CREATION: User clicked "Create Wallet" → needs PIN first
+        // ════════════════════════════════════════════════════════════════════
+        if (text && walletCreationPending.has(recipientPhone)) {
+          const pin = text.body.trim()
+          if (!/^\d{4,6}$/.test(pin)) {
+            await send(
+              recipientPhone,
+              recipientName,
+              `❌ Invalid PIN. Please reply with a *4-6 digit number* (e.g. 1234).`,
+            )
+            try { await Whatsapp.markMessageAsRead({ message_id: messageId }) } catch {}
+            return
+          }
+
+          // PIN is valid — now create wallet + set PIN on-chain
+          const pendingData = walletCreationPending.get(recipientPhone)!
+          try {
+            await send(recipientPhone, recipientName, '⏳ Creating your wallet and setting PIN...')
+
+            // Step 1: Create wallet on-chain
+            const walletAddress = await createUser(recipientPhone, pendingData.name)
+
+            // Step 2: Set PIN on-chain (hashed)
+            await setUserPin(recipientPhone, pin)
+
+            // Clean up
+            walletCreationPending.delete(recipientPhone)
+
+            await send(
+              recipientPhone,
+              recipientName,
+              `✅ *Wallet created and PIN set!* 🔐\n\n` +
+              `Your wallet address:\n\`${walletAddress}\`\n\n` +
+              `_Your PIN will be required for every transaction._`,
+            )
+            await sendMenuTo(recipientPhone, recipientName)
+          } catch (err) {
+            // Clean up on failure so they can retry
+            walletCreationPending.delete(recipientPhone)
+            await send(
+              recipientPhone,
+              recipientName,
+              `❌ Failed to create wallet. Please try again.\n${(err as Error).message}`,
+            )
+            // Re-show create wallet button
+            await sendButtons(
+              recipientPhone,
+              recipientName,
+              "Would you like to try again?",
+              [{ title: 'Create a wallet', id: 'create_wallet' }],
+            )
+          }
+          try { await Whatsapp.markMessageAsRead({ message_id: messageId }) } catch {}
+          return
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // 2) EXISTING USER FLOWS
+        // ════════════════════════════════════════════════════════════════════
         let user = null
 
         // Try blockchain lookup — but NEVER let it block the reply
@@ -193,34 +257,13 @@ const handler: VercelApiHandler = async (
           const errMsg = (blockchainErr as Error).message
           console.error('Blockchain lookup failed:', errMsg)
           logSystem(`Blockchain lookup failed for ${recipientPhone}`, recipientPhone, errMsg)
-          // Treat as new user so they still get a response
           user = null
         }
 
         if (user) {
           const userId = user.address
 
-          // ── PIN Setup (after wallet creation) ────────────────────────────
-          if (text && pinSetupPending.has(recipientPhone)) {
-            const pin = text.body.trim()
-            if (!/^\d{4,6}$/.test(pin)) {
-              await send(recipientPhone, recipientName, `❌ Invalid PIN. Please reply with a *4-6 digit number* (e.g. 1234).`)
-              try { await Whatsapp.markMessageAsRead({ message_id: messageId }) } catch {}
-              return
-            }
-            try {
-              await setUserPin(recipientPhone, pin)
-              pinSetupPending.delete(recipientPhone)
-              await send(recipientPhone, recipientName, `✅ PIN set successfully! 🔐\n\n_Your PIN will be required before every payment._`)
-              await sendMenuTo(recipientPhone, recipientName)
-            } catch (err) {
-              await send(recipientPhone, recipientName, `Failed to set PIN. Please try again.\n${(err as Error).message}`)
-            }
-            try { await Whatsapp.markMessageAsRead({ message_id: messageId }) } catch {}
-            return
-          }
-
-          // Waiting for receiver phone/address
+          // ── Waiting for receiver phone/address ──────────────────────────
           if (text && (await isReceiverInputPending(userId))) {
             try {
               const validatedReceiver = await addReceiverToPayment({
@@ -307,30 +350,26 @@ const handler: VercelApiHandler = async (
             }
 
             try {
-              const receiverUser = await getReceiverUserFromUncompletedPaymentRequest(userId)
-              const toAddress = await getRecipientAddressFromUncompletedPaymentRequest(userId)
               await confirmPaymentRequest({ userId, amount })
 
-              // Check if PIN is set
+              // PIN is MANDATORY for ALL transactions — no bypass
               const pinSet = await checkIsPinSet(recipientPhone)
               if (!pinSet) {
-                // No PIN — execute payment directly (legacy users)
-                const senderPrivateKey = await getPrivateKeyByPhoneNumber(recipientPhone)
-                const fromAddress = await getAddressByPhoneNumber(recipientPhone)
-                await sendHlusdFromWallet({ tokenAmount: amount, privateKey: senderPrivateKey, toAddress })
-                await send(recipientPhone, recipientName, '✅ Payment successful! 🎉')
-                if (receiverUser) {
-                  await send(receiverUser.phoneNumer, receiverUser.name, `You received ${amount} HLUSD from ${user.name} 🌟`)
-                  await sendMenuTo(receiverUser.phoneNumer, receiverUser.name)
-                }
-                const helaScanUrl = getHelaScanUrlForAddress(fromAddress)
-                await send(recipientPhone, recipientName, helaScanUrl)
-              } else {
-                // PIN set — ask for PIN before executing
+                // User has wallet but no PIN — force them to set one
+                await updatePaymentRequestToError(userId)
                 await send(
                   recipientPhone,
                   recipientName,
-                  `🔐 Enter your 4-digit PIN to confirm sending *${amount} HLUSD*:`,
+                  `🔐 *You need to set a PIN before making transactions.*\n\n` +
+                  `Please contact support or re-create your wallet to set a PIN.`,
+                )
+                await sendMenuTo(recipientPhone, recipientName)
+              } else {
+                // PIN is set — ask for it
+                await send(
+                  recipientPhone,
+                  recipientName,
+                  `🔐 Enter your *PIN* to confirm sending *${amount} HLUSD*:`,
                 )
               }
             } catch (err) {
@@ -390,6 +429,18 @@ const handler: VercelApiHandler = async (
           switch (button_id) {
             case 'send_money': {
               if (!user) throw new Error('Wallet not found — please create one first')
+
+              // Check PIN is set before allowing any transaction
+              const pinSet = await checkIsPinSet(recipientPhone)
+              if (!pinSet) {
+                await send(
+                  recipientPhone,
+                  recipientName,
+                  `🔐 *You need a PIN to make transactions.*\n\nPlease contact support or re-create your wallet.`,
+                )
+                break
+              }
+
               await makePaymentRequest({ amount: null, fromUserId: user.address, to: null })
               await send(recipientPhone, recipientName, `Who would you like to send money to?`)
               await sendButtons(
@@ -437,16 +488,14 @@ const handler: VercelApiHandler = async (
             }
 
             case 'create_wallet': {
-              await send(recipientPhone, recipientName, 'Creating your wallet... 🔨')
-              const walletAddress = await createUser(recipientPhone, recipientName)
-              await send(recipientPhone, recipientName, '🚀 Wallet created on *Hela Chain*!\nYour address:')
-              await send(recipientPhone, recipientName, walletAddress)
-              // Ask user to set a PIN
-              pinSetupPending.add(recipientPhone)
+              // ── NEW FLOW: Ask for PIN FIRST, then create wallet ────────────
+              walletCreationPending.set(recipientPhone, { name: recipientName })
               await send(
                 recipientPhone,
                 recipientName,
-                `🔐 *Set your transaction PIN*\n\nPlease reply with a *4-digit PIN* to secure your payments.\n\n_This PIN will be required before every transaction._`,
+                `🔐 *Set your transaction PIN*\n\n` +
+                `Before creating your wallet, please reply with a *4-6 digit PIN*.\n\n` +
+                `_This PIN will be required for every transaction. Keep it safe!_`,
               )
               break
             }
