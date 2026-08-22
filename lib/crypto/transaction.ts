@@ -163,9 +163,9 @@ export async function sendHlusdFromWallet({
     const tx = await wallet.sendTransaction({ to: toAddress, value: amountInWei })
     await tx.wait()
 
-    // 2. Record payment on smart contract
+    // 2. Record payment as on-chain event (cheap)
     const contract = getContract(wallet)
-    const contractTx = await contract.createPaymentRequest(toAddress, amountInWei)
+    const contractTx = await contract.recordPayment(toAddress, amountInWei)
     await contractTx.wait()
 
     return tx

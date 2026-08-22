@@ -23,12 +23,11 @@ function getContractAddress(): string {
 
 // ─── ABI ─────────────────────────────────────────────────────────────────────
 const CRYPTOX_ABI = [
-  'function registerUser(string memory _phone, string memory _name, address _wallet, string memory _encryptedPrivateKey) public',
-  'function getUser(string memory _phone) public view returns (address, string memory, string memory, bool)',
-  'function createPaymentRequest(address _to, uint256 _amount) public',
-  'function getPaymentRequests(address _user) public view returns (tuple(address fromAddress, address toAddress, uint256 amount, string status, uint256 createdAt)[])',
-  'event UserRegistered(address indexed wallet, string name)',
-  'event PaymentCreated(address indexed from, address indexed to, uint256 amount)',
+  'function registerUser(string calldata _phone, string calldata _name, address _wallet, string calldata _encryptedPrivateKey) external',
+  'function getUser(string calldata _phone) external view returns (address walletAddress, string memory name, string memory encryptedPrivateKey, bool exists)',
+  'function recordPayment(address _to, uint256 _amount) external',
+  'event UserRegistered(address indexed wallet, bytes32 indexed phoneHash, string name)',
+  'event PaymentSent(address indexed from, address indexed to, uint256 amount, uint256 timestamp)',
 ]
 
 type Numberish = number | bigint
@@ -146,7 +145,7 @@ export async function getUserFromChain(phone: string): Promise<{
   return { walletAddress, name, encryptedPrivateKey, exists }
 }
 
-export async function createPaymentRequestOnChain(
+export async function recordPaymentOnChain(
   fromPrivateKey: string,
   toAddress: string,
   amount: number,
@@ -155,27 +154,9 @@ export async function createPaymentRequestOnChain(
   const wallet = new ethers.Wallet(fromPrivateKey, provider)
   const contract = getContract(wallet)
   const amountInWei = ethers.parseEther(amount.toString())
-  const tx = await contract.createPaymentRequest(toAddress, amountInWei)
+  const tx = await contract.recordPayment(toAddress, amountInWei)
   await tx.wait()
 }
 
-export async function getPaymentRequestsFromChain(userAddress: string): Promise<
-  {
-    fromAddress: string
-    toAddress: string
-    amount: number
-    status: string
-    createdAt: number
-  }[]
-> {
-  const provider = getProvider()
-  const contract = getContract(provider)
-  const requests = await contract.getPaymentRequests(userAddress)
-  return requests.map((r: any) => ({
-    fromAddress: r.fromAddress,
-    toAddress: r.toAddress,
-    amount: removeDecimals(r.amount),
-    status: r.status,
-    createdAt: Number(r.createdAt),
-  }))
-}
+// Payments are now recorded as on-chain events (cheaper gas).
+// Use HeLa block explorer to query PaymentSent events for a given address.

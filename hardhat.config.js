@@ -1,5 +1,4 @@
 require("@nomicfoundation/hardhat-ethers");
-require("@nomicfoundation/hardhat-ignition-ethers");
 require("dotenv").config();
 
 const OPERATOR_KEY = process.env.OPERATOR_PRIVATE_KEY || "";
