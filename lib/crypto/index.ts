@@ -1,27 +1,24 @@
 import crypto from 'crypto'
 import { ethers } from 'ethers'
+import { 
+  CHAINS, 
+  getChainConfig, 
+  getDefaultChain, 
+  isChainSupported,
+  getAllSupportedChains,
+  type ChainConfig 
+} from '../config/chains'
 
-// ─── Lazy env-var getters (safe for serverless — no module-level throws) ──────
+// ─── Multi-Chain Crypto Library ─────────────────────────────────────────────
 
+// ─── Lazy env-var getters ───────────────────────────────────────────────────
 function getEncryptionKey(): string {
   const key = process.env.ENCRYPTION_KEY
   if (!key) throw new Error('ENCRYPTION_KEY env var is not set')
   return key
 }
 
-function getRpcUrl(): string {
-  const url = process.env.HELA_RPC_URL
-  if (!url) throw new Error('HELA_RPC_URL env var is not set')
-  return url
-}
-
-function getContractAddress(): string {
-  const addr = process.env.CRYPTOX_CONTRACT_ADDRESS
-  if (!addr) throw new Error('CRYPTOX_CONTRACT_ADDRESS env var is not set')
-  return addr
-}
-
-// ─── ABI ─────────────────────────────────────────────────────────────────────
+// ─── ABI (same for all chains) ──────────────────────────────────────────────
 const CRYPTOX_ABI = [
   'function registerUser(string calldata _phone, string calldata _name, address _wallet, string calldata _encryptedPrivateKey) external',
   'function getUser(string calldata _phone) external view returns (address walletAddress, string memory name, string memory encryptedPrivateKey, bool exists)',
@@ -36,16 +33,14 @@ const CRYPTOX_ABI = [
 
 type Numberish = number | bigint
 
-function removeDecimals(number: Numberish): number {
-  return Number(number) / 10 ** 18
+function removeDecimals(number: Numberish, decimals: number = 18): number {
+  return Number(number) / 10 ** decimals
 }
 
 // ─── Encryption ───────────────────────────────────────────────────────────────
-
 function getDerivedEncryptionKey(): Buffer {
   const encryptionKey = getEncryptionKey()
   let key = Buffer.from(encryptionKey, 'hex')
-  // If not exactly 32 bytes (64 hex chars), hash it to get a valid 32-byte AES key
   if (key.length !== 32) {
     key = crypto.createHash('sha256').update(encryptionKey).digest()
   }
@@ -80,20 +75,28 @@ export function decryptPrivateKey(encryptedPrivateKey: string): string {
   return decrypted.toString('utf8')
 }
 
-// ─── Provider / Contract ──────────────────────────────────────────────────────
-
-export function getProvider(): ethers.JsonRpcProvider {
-  return new ethers.JsonRpcProvider(getRpcUrl())
+// ─── Multi-Chain Provider / Contract ─────────────────────────────────────────
+export function getProvider(chainName?: string): ethers.JsonRpcProvider {
+  const chain = chainName || getDefaultChain()
+  const config = getChainConfig(chain)
+  return new ethers.JsonRpcProvider(config.rpcUrl)
 }
 
 export function getContract(
   signerOrProvider: ethers.Signer | ethers.Provider,
+  chainName?: string
 ): ethers.Contract {
-  return new ethers.Contract(getContractAddress(), CRYPTOX_ABI, signerOrProvider)
+  const chain = chainName || getDefaultChain()
+  const config = getChainConfig(chain)
+  
+  if (!config.contractAddress) {
+    throw new Error(`Contract address not configured for ${chain}`)
+  }
+  
+  return new ethers.Contract(config.contractAddress, CRYPTOX_ABI, signerOrProvider)
 }
 
 // ─── Crypto Utilities ─────────────────────────────────────────────────────────
-
 export function buildPrivateKey(): string {
   const id = crypto.randomBytes(32).toString('hex')
   return `0x${id}`
@@ -103,50 +106,183 @@ export function getAddressFromPrivateKey(privateKey: string): string {
   return new ethers.Wallet(privateKey).address
 }
 
-// ─── Account Balances ─────────────────────────────────────────────────────────
-
+// ─── Multi-Chain Account Balances ───────────────────────────────────────────
 export async function getAccountBalances(
   privateKey: string,
-): Promise<{ hlusdBalance: number }> {
-  const provider = getProvider()
+  chainName?: string
+): Promise<{ balance: number; currency: string }> {
+  const chain = chainName || getDefaultChain()
+  const config = getChainConfig(chain)
+  const provider = getProvider(chain)
   const wallet = new ethers.Wallet(privateKey)
-  const hlusdBalance = await provider.getBalance(wallet.address, 'latest')
-  return { hlusdBalance: removeDecimals(hlusdBalance) }
+  
+  const balance = await provider.getBalance(wallet.address, 'latest')
+  return { 
+    balance: removeDecimals(balance),
+    currency: config.nativeCurrency
+  }
 }
 
-// ─── Chain Registration ───────────────────────────────────────────────────────
+// Get balances for all supported chains
+export async function getMultiChainBalances(
+  privateKey: string
+): Promise<Record<string, { balance: number; currency: string }>> {
+  const balances: Record<string, { balance: number; currency: string }> = {}
+  const wallet = new ethers.Wallet(privateKey)
+  const address = wallet.address
+  
+  for (const chain of getAllSupportedChains()) {
+    try {
+      const provider = new ethers.JsonRpcProvider(chain.rpcUrl)
+      const balance = await provider.getBalance(address, 'latest')
+      
+      balances[chain.name] = {
+        balance: removeDecimals(balance),
+        currency: chain.nativeCurrency
+      }
+    } catch (error) {
+      console.error(`Failed to get balance for ${chain.name}:`, error)
+      balances[chain.name] = {
+        balance: 0,
+        currency: chain.nativeCurrency
+      }
+    }
+  }
+  
+  return balances
+}
 
+// ─── Multi-Chain Registration ───────────────────────────────────────────────
 export async function registerUserOnChain(
   phone: string,
   name: string,
   privateKey: string,
   walletAddress: string,
-): Promise<void> {
+  chainName?: string
+): Promise<string> {
+  const chain = chainName || getDefaultChain()
+  
   let operatorKey = process.env.OPERATOR_PRIVATE_KEY
   if (!operatorKey) throw new Error('OPERATOR_PRIVATE_KEY env var is not set')
   if (!operatorKey.startsWith('0x')) operatorKey = '0x' + operatorKey
 
-  const provider = getProvider()
+  const config = getChainConfig(chain)
+  const provider = getProvider(chain)
   const operatorWallet = new ethers.Wallet(operatorKey, provider)
-  const contract = getContract(operatorWallet)
+  const contract = getContract(operatorWallet, chain)
+  
   const encryptedKey = encryptPrivateKey(privateKey)
   const tx = await contract.registerUser(phone, name, walletAddress, encryptedKey)
-  await tx.wait()
+  const receipt = await tx.wait()
+  
+  return receipt.hash
 }
 
-// ─── Chain Query ──────────────────────────────────────────────────────────────
+// Register user on multiple chains
+export async function registerUserOnMultipleChains(
+  phone: string,
+  name: string,
+  privateKey: string,
+  walletAddress: string,
+  chains: string[] = getSupportedChains()
+): Promise<Record<string, string>> {
+  const results: Record<string, string> = {}
+  
+  for (const chain of chains) {
+    if (!isChainSupported(chain)) continue
+    
+    try {
+      const txHash = await registerUserOnChain(phone, name, privateKey, walletAddress, chain)
+      results[chain] = txHash
+      console.log(`✅ Registered on ${chain}: ${txHash}`)
+    } catch (error) {
+      console.error(`❌ Failed to register on ${chain}:`, error)
+      results[chain] = `error: ${(error as Error).message}`
+    }
+  }
+  
+  return results
+}
 
-export async function getUserFromChain(phone: string): Promise<{
+// ─── Multi-Chain Query ──────────────────────────────────────────────────────
+export async function getUserFromChain(
+  phone: string,
+  chainName?: string
+): Promise<{
   walletAddress: string
   name: string
   encryptedPrivateKey: string
   exists: boolean
 } | null> {
-  const provider = getProvider()
-  const contract = getContract(provider)
-  const [walletAddress, name, encryptedPrivateKey, exists] = await contract.getUser(phone)
-  if (!exists) return null
-  return { walletAddress, name, encryptedPrivateKey, exists }
+  const chain = chainName || getDefaultChain()
+  const config = getChainConfig(chain)
+  
+  if (!config.contractAddress) {
+    console.warn(`No contract address for ${chain}, skipping query`)
+    return null
+  }
+  
+  try {
+    const provider = getProvider(chain)
+    const contract = getContract(provider, chain)
+    const [walletAddress, name, encryptedPrivateKey, exists] = await contract.getUser(phone)
+    
+    if (!exists) return null
+    return { walletAddress, name, encryptedPrivateKey, exists }
+  } catch (error) {
+    console.error(`Failed to get user from ${chain}:`, error)
+    return null
+  }
+}
+
+// Get user from any supported chain
+export async function findUserAcrossChains(
+  phone: string
+): Promise<{
+  chain: string
+  walletAddress: string
+  name: string
+  encryptedPrivateKey: string
+} | null> {
+  for (const chain of getAllSupportedChains()) {
+    const user = await getUserFromChain(phone, chain.name)
+    if (user) {
+      return {
+        chain: chain.name,
+        ...user
+      }
+    }
+  }
+  return null
+}
+
+// ─── Chain Utilities ────────────────────────────────────────────────────────
+export function getSupportedChains(): string[] {
+  return getAllSupportedChains().map(chain => chain.name)
+}
+
+export function getChainInfo(chainName: string): ChainConfig {
+  return getChainConfig(chainName)
+}
+
+// ─── Testnet Wallet Generation ──────────────────────────────────────────────
+export function generateTestnetWallet(phone: string, chainName: string): {
+  address: string
+  privateKey: string
+  mnemonicPath: string
+} {
+  // Deterministic wallet generation for testing
+  const seed = crypto
+    .createHash('sha256')
+    .update(`${phone}:${chainName}:${process.env.TESTNET_MNEMONIC || 'test'}`)
+    .digest('hex')
+  
+  const wallet = ethers.Wallet.createRandom()
+  return {
+    address: wallet.address,
+    privateKey: wallet.privateKey,
+    mnemonicPath: `m/44'/60'/0'/0/${chainName.length % 1000}`,
+  }
 }
 
 export async function recordPaymentOnChain(

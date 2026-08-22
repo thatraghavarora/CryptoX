@@ -1,6 +1,6 @@
 import { ethers } from 'ethers'
 import { User, getAddressByPhoneNumber, getUserFromPhoneNumber } from 'lib/user'
-import { getContract, getProvider } from '.'
+import { getContract, getProvider, getChainInfo } from '.'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,6 +14,8 @@ type PaymentRequest = {
   toUserId: string | null
   status: Status
   amount: number | null
+  chain: string  // Added chain support
+  currency: string
 }
 
 export type Address = string
@@ -28,18 +30,21 @@ export function getAmountFromPendingRequest(userId: string): number {
   return req?.amount ?? 0
 }
 
-
-// ─── Payment Request Helpers ──────────────────────────────────────────────────
+// ─── Multi-Chain Payment Request Helpers ──────────────────────────────────────
 
 export async function makePaymentRequest({
   fromUserId,
   to,
   amount,
+  chain = 'hela',
 }: {
   fromUserId: string
   to: Address | PhoneNumber | null
   amount: number | null
+  chain?: string
 }): Promise<PaymentRequest> {
+  const chainInfo = getChainInfo(chain)
+  
   const paymentRequest: PaymentRequest = {
     id: Date.now().toString(),
     createdAt: new Date().toISOString(),
@@ -48,6 +53,8 @@ export async function makePaymentRequest({
     toUserId: null,
     status: 'ADDRESS_PENDING',
     amount,
+    chain,
+    currency: chainInfo.nativeCurrency,
   }
   paymentRequestStore.set(fromUserId, paymentRequest)
   return paymentRequest
@@ -162,28 +169,31 @@ export async function updatePaymentRequestToError(userId: string): Promise<void>
   }
 }
 
-// ─── On-chain Transfer ────────────────────────────────────────────────────────
+// ─── Multi-Chain Transfer Functions ──────────────────────────────────────────
 
-export async function sendHlusdFromWallet({
+export async function sendCryptoFromWallet({
   tokenAmount,
   toAddress,
   privateKey,
+  chain = 'hela',
 }: {
   tokenAmount: number
   toAddress: string
   privateKey: string
+  chain?: string
 }): Promise<ethers.TransactionResponse> {
   try {
-    const provider = getProvider()
+    const chainInfo = getChainInfo(chain)
+    const provider = getProvider(chain)
     const wallet = new ethers.Wallet(privateKey, provider)
     const amountInWei = ethers.parseEther(String(tokenAmount))
 
-    // 1. Send HLUSD on-chain
+    // 1. Send native currency on-chain
     const tx = await wallet.sendTransaction({ to: toAddress, value: amountInWei })
     await tx.wait()
 
     // 2. Record payment as on-chain event (cheap)
-    const contract = getContract(wallet)
+    const contract = getContract(wallet, chain)
     const contractTx = await contract.recordPayment(toAddress, amountInWei)
     await contractTx.wait()
 
@@ -191,12 +201,48 @@ export async function sendHlusdFromWallet({
   } catch (error) {
     const msg = (error as Error).message || ''
     if (msg.includes('insufficient funds')) {
-      throw new Error('Insufficient HLUSD balance to complete this transaction')
+      throw new Error(`Insufficient ${getChainInfo(chain).nativeCurrency} balance to complete this transaction`)
     }
     throw error
   }
 }
 
-export function getHelaScanUrlForAddress(address: string): string {
-  return `https://testnet.helascan.io/address/${address}`
+// ─── Multi-Chain Explorer URLs ───────────────────────────────────────────────
+
+export function getExplorerUrlForAddress(address: string, chain: string = 'hela'): string {
+  const chainInfo = getChainInfo(chain)
+  return `${chainInfo.explorerUrl}/address/${address}`
+}
+
+export function getExplorerUrlForTx(txHash: string, chain: string = 'hela'): string {
+  const chainInfo = getChainInfo(chain)
+  return `${chainInfo.explorerUrl}/tx/${txHash}`
+}
+
+// ─── Get current payment request info ────────────────────────────────────────
+
+export function getCurrentPaymentRequest(userId: string): PaymentRequest | null {
+  return paymentRequestStore.get(userId) || null
+}
+
+export function getPaymentChain(userId: string): string | null {
+  const req = paymentRequestStore.get(userId)
+  return req?.chain || null
+}
+
+export function getPaymentCurrency(userId: string): string | null {
+  const req = paymentRequestStore.get(userId)
+  return req?.currency || null
+}
+
+// ─── Clean up old requests ───────────────────────────────────────────────────
+
+export function cleanupOldRequests(maxAgeMinutes: number = 30): void {
+  const now = Date.now()
+  for (const [userId, req] of paymentRequestStore.entries()) {
+    const requestAge = now - new Date(req.createdAt).getTime()
+    if (requestAge > maxAgeMinutes * 60 * 1000) {
+      paymentRequestStore.delete(userId)
+    }
+  }
 }
