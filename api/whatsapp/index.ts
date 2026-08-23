@@ -259,8 +259,21 @@ const handler: VercelApiHandler = async (
           return
         }
 
-        // 3. Check if user exists
-        const user = await getUserFromPhoneNumber(recipientPhone)
+        // 3. Check if user exists (with timeout to avoid hanging)
+        let user = null
+        try {
+          user = await Promise.race([
+            getUserFromPhoneNumber(recipientPhone),
+            new Promise<null>((_, reject) =>
+              setTimeout(() => reject(new Error('Blockchain lookup timed out after 8s')), 8000),
+            ),
+          ])
+        } catch (blockchainErr) {
+          const errMsg = (blockchainErr as Error).message
+          console.error('Blockchain lookup failed:', errMsg)
+          // On timeout/error, fall through to show welcome — user can always retry
+          user = null
+        }
         
         if (user) {
           const userId = user.address
@@ -374,14 +387,20 @@ const handler: VercelApiHandler = async (
             return
           }
 
-          // Existing user - show menu
+          // Existing user — show menu regardless of what they typed
+          await send(recipientPhone, recipientName, `Welcome back${recipientName ? `, ${recipientName}` : ''}! 👋`)
           await sendMenuTo(recipientPhone, recipientName)
         } else {
-          // New user - welcome flow
+          // New user (or blockchain unavailable) — show welcome flow
           await send(
             recipientPhone,
             recipientName,
-            `Hi ${recipientName}! 👋 Welcome to CryptoX`
+            `Hi ${recipientName}! 👋 Welcome to *CryptoX*`
+          )
+          await send(
+            recipientPhone,
+            recipientName,
+            `CryptoX is a WhatsApp-native crypto wallet ⛓️\n\n✅ Instant payments\n✅ Send & receive crypto\n✅ Non-custodial wallet\n✅ No app needed — just WhatsApp!`
           )
           await sendButtons(
             recipientPhone,
@@ -400,7 +419,18 @@ const handler: VercelApiHandler = async (
         const button_id = data.message.button_reply?.id
         console.log('Button pressed:', button_id)
 
-        const user = await getUserFromPhoneNumber(recipientPhone)
+        let user = null
+        try {
+          user = await Promise.race([
+            getUserFromPhoneNumber(recipientPhone),
+            new Promise<null>((_, reject) =>
+              setTimeout(() => reject(new Error('Blockchain lookup timed out')), 8000),
+            ),
+          ])
+        } catch (blockchainErr) {
+          console.error('Blockchain lookup failed (button):', (blockchainErr as Error).message)
+          user = null
+        }
 
         try {
           switch (button_id) {

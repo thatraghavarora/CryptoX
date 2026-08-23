@@ -245,6 +245,11 @@ export async function findUserAcrossChains(
   encryptedPrivateKey: string
 } | null> {
   for (const chain of getAllSupportedChains()) {
+    // Skip chains with no contract deployed — avoids pointless slow RPC calls
+    if (!chain.contractAddress) {
+      console.log(`Skipping ${chain.name} — no contract address configured`)
+      continue
+    }
     const user = await getUserFromChain(phone, chain.name)
     if (user) {
       return {
